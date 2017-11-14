@@ -137,7 +137,7 @@ where
         relevant_ty_params: HashSet::new(),
     };
     match cont.body {
-        Body::Enum(ref variants) => {
+        Body::Enum(_, ref variants) => {
             for variant in variants.iter() {
                 let relevant_fields = variant
                     .fields
