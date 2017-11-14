@@ -19,7 +19,7 @@ pub struct Container<'a> {
 }
 
 pub enum Body<'a> {
-    Enum(Vec<Variant<'a>>),
+    Enum(Repr, Vec<Variant<'a>>),
     Struct(Style, Vec<Field<'a>>),
 }
 
@@ -36,6 +36,12 @@ pub struct Field<'a> {
     pub ty: &'a syn::Ty,
 }
 
+pub struct Repr {
+    pub int_repr: Option<&'static str>,
+    pub c_repr: bool,
+    pub other_repr: bool,
+}
+
 #[derive(Copy, Clone)]
 pub enum Style {
     Struct,
@@ -50,7 +56,8 @@ impl<'a> Container<'a> {
 
         let mut body = match item.body {
             syn::Body::Enum(ref variants) => {
-                Body::Enum(enum_from_ast(cx, variants, &attrs.default()))
+                let (repr, variants) = enum_from_ast(cx, item, variants, &attrs.default());
+                Body::Enum(repr, variants)
             }
             syn::Body::Struct(ref variant_data) => {
                 let (style, fields) = struct_from_ast(cx, variant_data, None, &attrs.default());
@@ -59,7 +66,7 @@ impl<'a> Container<'a> {
         };
 
         match body {
-            Body::Enum(ref mut variants) => for ref mut variant in variants {
+            Body::Enum(_, ref mut variants) => for ref mut variant in variants {
                 variant.attrs.rename_by_rule(attrs.rename_all());
                 for ref mut field in &mut variant.fields {
                     field.attrs.rename_by_rule(variant.attrs.rename_all());
@@ -84,7 +91,7 @@ impl<'a> Container<'a> {
 impl<'a> Body<'a> {
     pub fn all_fields(&'a self) -> Box<Iterator<Item = &'a Field<'a>> + 'a> {
         match *self {
-            Body::Enum(ref variants) => {
+            Body::Enum(_, ref variants) => {
                 Box::new(variants.iter().flat_map(|variant| variant.fields.iter()))
             }
             Body::Struct(_, ref fields) => Box::new(fields.iter()),
@@ -96,25 +103,89 @@ impl<'a> Body<'a> {
     }
 }
 
+impl Repr {
+    /// Gives the int type to use for the `repr(int)` enum layout
+    pub fn get_stable_rust_enum_layout(&self) -> Option<&'static str> {
+        if self.c_repr || self.other_repr {
+            None
+        } else {
+            self.int_repr
+        }
+    }
+
+    /// Gives the int type to use for the `repr(C, int)` enum layout
+    pub fn get_stable_c_enum_layout(&self) -> Option<&'static str> {
+        if !self.c_repr && self.other_repr {
+            None
+        } else {
+            self.int_repr
+        }
+    }
+}
+
 fn enum_from_ast<'a>(
-    cx: &Ctxt,
-    variants: &'a [syn::Variant],
-    container_default: &attr::Default,
-) -> Vec<Variant<'a>> {
-    variants
+    cx: &Ctxt, 
+    item: &'a syn::DeriveInput, 
+    variants: &'a [syn::Variant], 
+    container_default: &attr::Default
+) -> (Repr, Vec<Variant<'a>>) {
+    let variants = variants
         .iter()
-        .map(|variant| {
-            let attrs = attr::Variant::from_ast(cx, variant);
-            let (style, fields) =
-                struct_from_ast(cx, &variant.data, Some(&attrs), container_default);
-            Variant {
-                ident: variant.ident.clone(),
-                attrs: attrs,
-                style: style,
-                fields: fields,
+        .map(
+            |variant| {
+                let attrs = attr::Variant::from_ast(cx, variant);
+                let (style, fields) = 
+                    struct_from_ast(cx, &variant.data, Some(&attrs), container_default);
+                Variant {
+                    ident: variant.ident.clone(),
+                    attrs: attrs,
+                    style: style,
+                    fields: fields,
+                }
+            },
+        )
+        .collect();
+
+    // Compute repr info for enum optimizations
+    static INT_TYPES: [&'static str; 12] = [
+        "u8", "u16", "u32", "u64", "u128", "usize",
+        "i8", "i16", "i32", "i64", "i128", "isize",
+    ];
+
+    let mut int_repr = None;
+    let mut c_repr = false;
+    let mut other_repr = false;
+
+    for attr in &item.attrs {
+        if let syn::MetaItem::List(ref ident, ref vals) = attr.value {
+            if *ident == "repr" {
+                // has_repr = true;
+                for repr in vals {
+                    if let syn::NestedMetaItem::MetaItem(syn::MetaItem::Word(ref repr)) = *repr {
+                        if repr == "C" {
+                            c_repr = true;
+                        } else if let Some(int_type) = INT_TYPES.iter().cloned().find(|int_type| repr == int_type) {
+                            if int_repr.is_some() {
+                                // This shouldn't happen, but we shouldn't crash if we see it.
+                                // So just treat the enum as having a mysterious other repr,
+                                // which makes us discard any attempt to optimize based on layout.
+                                other_repr = true;
+                            }
+                            int_repr = Some(int_type);
+                        } else {
+                            other_repr = true;
+                        }
+                    } else {
+                        panic!("impossible repr? {:?}", repr);
+                    }
+                }
             }
-        })
-        .collect()
+        }
+    }
+
+    let repr = Repr { int_repr, c_repr, other_repr };
+
+    (repr, variants)
 }
 
 fn struct_from_ast<'a>(

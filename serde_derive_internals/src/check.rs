@@ -22,7 +22,7 @@ pub fn check(cx: &Ctxt, cont: &Container) {
 /// attribute.
 fn check_getter(cx: &Ctxt, cont: &Container) {
     match cont.body {
-        Body::Enum(_) => {
+        Body::Enum(_, _) => {
             if cont.body.has_getter() {
                 cx.error("#[serde(getter = \"...\")] is not allowed in an enum");
             }
@@ -46,7 +46,7 @@ fn check_getter(cx: &Ctxt, cont: &Container) {
 /// last variant may be a newtype variant which is an implicit "other" case.
 fn check_identifier(cx: &Ctxt, cont: &Container) {
     let variants = match cont.body {
-        Body::Enum(ref variants) => variants,
+        Body::Enum(_, ref variants) => variants,
         Body::Struct(_, _) => {
             return;
         }
@@ -103,7 +103,7 @@ fn check_identifier(cx: &Ctxt, cont: &Container) {
 /// (de)serialize_with.
 fn check_variant_skip_attrs(cx: &Ctxt, cont: &Container) {
     let variants = match cont.body {
-        Body::Enum(ref variants) => variants,
+        Body::Enum(_, ref variants) => variants,
         Body::Struct(_, _) => {
             return;
         }
