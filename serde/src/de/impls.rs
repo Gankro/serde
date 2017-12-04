@@ -68,36 +68,12 @@ impl<'de> Visitor<'de> for BoolVisitor {
     }
 }
 
-struct BoolFromVisitor<'a>(&'a mut bool);
-impl<'a, 'de> Visitor<'de> for BoolFromVisitor<'a> {
-    type Value = ();
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a boolean")
-    }
-
-    fn visit_bool<E>(self, v: bool) -> Result<(), E>
-    where
-        E: Error,
-    {
-        *self.0 = v;
-        Ok(())
-    }
-}
-
 impl<'de> Deserialize<'de> for bool {
     fn deserialize<D>(deserializer: D) -> Result<bool, D::Error>
     where
         D: Deserializer<'de>,
     {
         deserializer.deserialize_bool(BoolVisitor)
-    }
-
-    fn deserialize_from<D>(&mut self, deserializer: D) -> Result<(), D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_bool(BoolFromVisitor(self))
     }
 }
 
@@ -118,24 +94,6 @@ macro_rules! visit_integer_method {
     }
 }
 
-macro_rules! visit_from_integer_method {
-    ($src_ty:ident, $method:ident, $from_method:ident, $group:ident, $group_ty:ident) => {
-        #[inline]
-        fn $method<E>(self, v: $src_ty) -> Result<Self::Value, E>
-        where
-            E: Error,
-        {
-            match FromPrimitive::$from_method(v) {
-                Some(v) => {
-                    *self.0 = v;
-                    Ok(())
-                }
-                None => Err(Error::invalid_value(Unexpected::$group(v as $group_ty), &self)),
-            }
-        }
-    }
-}
-
 macro_rules! visit_float_method {
     ($src_ty:ident, $method:ident) => {
         #[inline]
@@ -144,19 +102,6 @@ macro_rules! visit_float_method {
             E: Error,
         {
             Ok(v as Self::Value)
-        }
-    }
-}
-
-macro_rules! visit_from_float_method {
-    ($src_ty:ident, $dest_ty:ident, $method:ident) => {
-        #[inline]
-        fn $method<E>(self, v: $src_ty) -> Result<(), E>
-        where
-            E: Error,
-        {
-            *self.0 = v as $dest_ty;
-            Ok(())
         }
     }
 }
@@ -185,27 +130,6 @@ macro_rules! impl_deserialize_num {
 
                 deserializer.$method(PrimitiveVisitor)
             }
-
-            fn deserialize_from<D>(&mut self, deserializer: D) -> Result<(), D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                struct PrimitiveVisitor<'a>(&'a mut $ty);
-
-                impl<'a, 'de> Visitor<'de> for PrimitiveVisitor<'a> {
-                    type Value = ();
-
-                    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                        formatter.write_str(stringify!($ty))
-                    }
-
-                    $(
-                        impl_deserialize_num!(from $visit $ty);
-                    )*
-                }
-
-                deserializer.$method(PrimitiveVisitor(self))
-            }
         }
     };
 
@@ -224,23 +148,6 @@ macro_rules! impl_deserialize_num {
     (float $ty:ident) => {
         visit_float_method!(f32, visit_f32);
         visit_float_method!(f64, visit_f64);
-    };
-
-    (from integer $ty:ident) => {
-        visit_from_integer_method!(i8, visit_i8, from_i8, Signed, i64);
-        visit_from_integer_method!(i16, visit_i16, from_i16, Signed, i64);
-        visit_from_integer_method!(i32, visit_i32, from_i32, Signed, i64);
-        visit_from_integer_method!(i64, visit_i64, from_i64, Signed, i64);
-
-        visit_from_integer_method!(u8, visit_u8, from_u8, Unsigned, u64);
-        visit_from_integer_method!(u16, visit_u16, from_u16, Unsigned, u64);
-        visit_from_integer_method!(u32, visit_u32, from_u32, Unsigned, u64);
-        visit_from_integer_method!(u64, visit_u64, from_u64, Unsigned, u64);
-    };
-
-    (from float $ty:ident) => {
-        visit_from_float_method!(f32, $ty, visit_f32);
-        visit_from_float_method!(f64, $ty, visit_f64);
     };
 }
 
@@ -262,7 +169,6 @@ impl_deserialize_num!(f64, deserialize_f64, integer, float);
 ////////////////////////////////////////////////////////////////////////////////
 
 struct CharVisitor;
-struct CharFromVisitor<'a>(&'a mut char);
 
 impl<'de> Visitor<'de> for CharVisitor {
     type Value = char;
@@ -292,38 +198,6 @@ impl<'de> Visitor<'de> for CharVisitor {
     }
 }
 
-impl<'a, 'de> Visitor<'de> for CharFromVisitor<'a> {
-    type Value = ();
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a character")
-    }
-
-    #[inline]
-    fn visit_char<E>(self, v: char) -> Result<(), E>
-    where
-        E: Error,
-    {
-        *self.0 = v;
-        Ok(())
-    }
-
-    #[inline]
-    fn visit_str<E>(self, v: &str) -> Result<(), E>
-    where
-        E: Error,
-    {
-        let mut iter = v.chars();
-        match (iter.next(), iter.next()) {
-            (Some(c), None) => {
-                *self.0 = c;
-                Ok(())
-            }
-            _ => Err(Error::invalid_value(Unexpected::Str(v), &self)),
-        }
-    }
-}
-
 impl<'de> Deserialize<'de> for char {
     #[inline]
     fn deserialize<D>(deserializer: D) -> Result<char, D::Error>
@@ -331,13 +205,6 @@ impl<'de> Deserialize<'de> for char {
         D: Deserializer<'de>,
     {
         deserializer.deserialize_char(CharVisitor)
-    }
-
-    fn deserialize_from<D>(&mut self, deserializer: D) -> Result<(), D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_char(CharFromVisitor(self))
     }
 }
 
